@@ -13,29 +13,14 @@ type IEncryprot interface {
 
 // FileWriter. Write to a file
 type FileWriter struct {
-	Ctx       context.Context
-	Log       *logrus.Logger
-	F         *os.File
+	Ctx context.Context
+	Log *logrus.Logger
+	F   *os.File
 
-	encryptor IEncryprot
-	withEnctyption bool
-	
-	stopped        bool
-}
+	Encryptor      IEncryprot
+	WithEnctyption bool
 
-// WithEncryption. With encryption mode
-func (f *FileWriter) WithEncryption(encryptor IEncryprot) *FileWriter {
-
-	f.encryptor = encryptor
-	f.withEnctyption = true
-	return f
-}
-
-// WithoutEncryption. None encryption mode
-func (f *FileWriter) WithoutEncryption() *FileWriter {
-
-	f.withEnctyption = false
-	return f
+	stopped bool
 }
 
 // stopOnCancel. Watch context cancel
@@ -52,11 +37,11 @@ func (f *FileWriter) stopOnCancel() {
 func (f *FileWriter) Write(p []byte) (int, error) {
 
 	if f.stopped {
-		return 0, nil
+		return 0, context.Canceled
 	}
-	
-	if f.withEnctyption {
-		data, err := f.encryptor.Decrypt(p)
+
+	if f.WithEnctyption {
+		data, err := f.Encryptor.Decrypt(p)
 		if err != nil {
 			return len(p), err
 		}
