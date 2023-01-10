@@ -177,6 +177,7 @@ func (l *loader) createRequest(dToken string) (*http.Response, error) {
 
 func (l *loader) Upload(req loaderDTO.UploadDTO) {
 
+	
 }
 
 func (l *loader) replaceBackSlash() {}
