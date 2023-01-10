@@ -9,22 +9,28 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-var ErrCiphertextTooShort =  errors.New("ciphertext too short")
+var ErrCiphertextTooShort = errors.New("ciphertext too short")
 
 // encryptor.
 type encryptor struct {
-	key  []byte
-	aead cipher.AEAD
+	key        []byte
+	aead       cipher.AEAD
+	encryption bool
 }
 
 // CnfEncrypter. key required
 type CnfEncrypter struct {
-	Key string
+	Key       string
+	Ecryption bool
 }
 
 // NewEncryptor.
 // Create a new encryption cipher. Your key will be hashed (256bit). Algorithm: chacha20poly1305
 func NewEncryptor(cnf CnfEncrypter) (*encryptor, error) {
+
+	if !cnf.Ecryption {
+		return &encryptor{}, nil
+	}
 
 	h := sha256.New()
 	h.Write([]byte(cnf.Key))
@@ -41,14 +47,19 @@ func NewEncryptor(cnf CnfEncrypter) (*encryptor, error) {
 	}
 
 	return &encryptor{
-		key:  key,
-		aead: aead,
+		key:        key,
+		aead:       aead,
+		encryption: cnf.Ecryption,
 	}, nil
 }
 
 // Encrypt.
 // Accept data byte -> return decrypted data, err: rand.Read
 func (e encryptor) Encrypt(data []byte) ([]byte, error) {
+
+	if !e.encryption {
+		return data, nil
+	}
 
 	nonce := make([]byte, e.aead.NonceSize(), e.aead.NonceSize()+len(data)+e.aead.Overhead())
 	if _, err := rand.Read(nonce); err != nil {
@@ -59,9 +70,13 @@ func (e encryptor) Encrypt(data []byte) ([]byte, error) {
 	return encryptedMsg, nil
 }
 
-// Decrypt. 
+// Decrypt.
 // Accept data byte -> return decrypted data, err: 1) ErrCiphertextTooShort, 2) aead.Open
 func (e encryptor) Decrypt(data []byte) ([]byte, error) {
+
+	if !e.encryption {
+		return data, nil
+	}
 
 	if len(data) < e.aead.NonceSize() {
 		return nil, ErrCiphertextTooShort
