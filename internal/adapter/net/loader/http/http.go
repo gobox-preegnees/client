@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -10,18 +11,17 @@ import (
 	"sync"
 
 	loaderDTO "github.com/gobox-preegnees/gobox-client/internal/adapter/net/loader"
-	ecnryption "github.com/gobox-preegnees/gobox-client/internal/utils/encryption"
 
 	"github.com/sirupsen/logrus"
 )
 
 // loader.
 type loader struct {
-	log        *logrus.Logger
-	addr       string
-	encryptKey string
-	basePath   string
-	token      string
+	log       *logrus.Logger
+	addr      string
+	token     string
+	encryptor IEncryprot
+	basePath  string
 
 	dMutex      sync.Mutex
 	downloading map[string]context.CancelFunc
@@ -32,22 +32,23 @@ type loader struct {
 
 // CnfLoader.
 type CnfLoader struct {
-	Log        *logrus.Logger
-	Addr       string
-	EncryptKey string
-	BasePath   string
-	Token      string
+	Log       *logrus.Logger
+	Addr      string
+	Encryptor IEncryprot
+	BasePath  string
+	Token     string
 }
 
 // NewLoader.
 func NewLoader(cnf CnfLoader) *loader {
 
+	// TODO: шифровать или нет, нужно настраивать в шифровщике
 	return &loader{
-		log:        cnf.Log,
-		addr:       cnf.Addr,
-		encryptKey: cnf.EncryptKey,
-		basePath:   cnf.BasePath,
-		token:      cnf.Token,
+		log:       cnf.Log,
+		addr:      cnf.Addr,
+		encryptor: cnf.Encryptor,
+		basePath:  cnf.BasePath,
+		token:     cnf.Token,
 
 		dMutex:      sync.Mutex{},
 		downloading: make(map[string]context.CancelFunc),
@@ -57,6 +58,7 @@ func NewLoader(cnf CnfLoader) *loader {
 	}
 }
 
+// Download.
 func (l *loader) Download(in loaderDTO.DownloadReqDTO) error {
 
 	// TODO: сделать что нибудь с ошибками
@@ -73,23 +75,11 @@ func (l *loader) Download(in loaderDTO.DownloadReqDTO) error {
 		Log:   l.log,
 		Total: 0,
 	}
-	
-	encryptor, err := ecnryption.NewEncryptor(ecnryption.CnfEncrypter{
-		Key: l.encryptKey,
-	})
-	if err != nil {
-		return err
-	}
 
 	fWriter := &FileWriter{
 		Ctx: ctx,
 		Log: l.log,
 		F:   in.F,
-	}
-	if l.token != "" {
-		fWriter.WithEncryption(encryptor)
-	} else {
-		fWriter.WithoutEncryption()
 	}
 	fWriter.stopOnCancel()
 
@@ -97,17 +87,32 @@ func (l *loader) Download(in loaderDTO.DownloadReqDTO) error {
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 
-	_, err = io.Copy(fWriter, io.TeeReader(resp.Body, counter))
-	if err != nil {
+	if err := l.saveFile(fWriter, resp.Body, counter); err != nil {
 		return err
 	}
+
+	// если загрузка проищошла успешно, то файл нужно удалить из загружаемых
+	l.abortDownloading(in.FileName)
 
 	// TODO: сверху нужно закрыть файл
 	return nil
 }
 
-// abortDownloading. 
+// saveFile. wrap the io.copy
+func (l *loader) saveFile(fw *FileWriter, body io.ReadCloser, wc *WriteCounter) error {
+
+	_, err := io.Copy(fw, io.TeeReader(body, wc))
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
+// abortDownloading.
 // Accept fileName (path) -> cancelFun() current downloading if exists
 func (l *loader) abortDownloading(fileName string) {
 
@@ -128,9 +133,9 @@ func (l *loader) createDonwloading(cancel context.CancelFunc, fileName string) {
 	l.dMutex.Unlock()
 }
 
-// prepareFile. 
+// prepareFile.
 // Truncate and seek in current file, which need to download
-func (l *loader) prepareFile(f *os.File, sizeFile int64) error {
+func (l loader) prepareFile(f *os.File, sizeFile int64) error {
 
 	if err := f.Truncate(sizeFile); err != nil {
 		return err
@@ -152,6 +157,8 @@ func (l *loader) createRequest(dToken string) (*http.Response, error) {
 	}
 	req.Header["Authorization"] = strings.Fields("Bearer " + l.token)
 	req.Header["dToken"] = strings.Fields(dToken)
+	
+	req.Close = true
 
 	cli := http.Client{
 		Transport: &http.Transport{
