@@ -1,1 +1,2 @@
 https://stackoverflow.com/questions/36900280/detect-cause-of-failing-rename
+https://pkg.go.dev/github.com/sirupsen/logrus/hooks/writer#section-readme
