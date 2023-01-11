@@ -6,7 +6,3 @@ type File struct {
 	SizeFile int64  `json:"size_file"`
 	ModTime  int64  `json:"mod_time" validate:"required"`
 }
-
-type FullFile struct {
-	File
-}
