@@ -19,8 +19,8 @@ const NEED_TO_DO = -1
 type IUsecase interface {
 	// CurrentRequestId. Returns the current requestID
 	GetCurrentRequestId() (id int)
-	// Create a snapshot. Creating a snapshot of directory that you specified in the config
-	CreateSnapshot()
+	// Apply сonsistency.
+	ApplyConsistency(entity.Consistency)
 	// MyClientId. Returns the clientID (name which need to create on web-sute)
 	GetClientId() (clientID string)
 	// MyClientId. Returns the address Server-Sent Events (SSE), example: http(s)://host:port/events?stream=<my_stream>
@@ -68,6 +68,7 @@ func (e *eventSSE) Run() error {
 		if err := json.Unmarshal(msg.Data, &consistency); err != nil {
 			e.log.Fatal(err)
 		}
+		
 		v := validator.New()
 		if err := v.Struct(consistency); err != nil {
 			e.log.Fatal(err)
@@ -76,17 +77,23 @@ func (e *eventSSE) Run() error {
 		if consistency.RequestId == NEED_TO_DO {
 			// Необходимо принять новые изменения в любом случае
 			// Такой запрос означает, что но сервере обновились данные и нужно принять это обновление
+			e.usecase.ApplyConsistency(consistency)
+			return
 		}
 		if consistency.Client == e.usecase.GetClientId() {
 			if consistency.RequestId == e.usecase.GetCurrentRequestId() {
 				// Так как id совпадают, это значит, что это последний ответ, который мы ожидаем получить
+				e.usecase.ApplyConsistency(consistency)
 			} else if consistency.RequestId < e.usecase.GetCurrentRequestId() {
 				// Это принимать не нужно, так как ответ устарел и нужно дождаться последнего ответа
+				return
 			} else {
 				// panic("такого ответа быть не должно")
+				e.log.Fatal("invalid new consistency:%v", consistency)
 			}
 		} else {
 			// Это ответ не предназначался нашему клиенту, нужно пропустить
+			return
 		}
 	})
 }
