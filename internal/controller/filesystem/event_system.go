@@ -9,19 +9,21 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const UPDATE_MODE = 200
+
 type ISnapshotUsecase interface {
-	CreateSnapshot()
+	CreateSnapshot(mode int)
 }
 
+// eventSystem.
 type eventSystem struct {
 	ctx             context.Context
 	log             *logrus.Logger
-	basePath        string
 	watcher         *fsnotify.Watcher
 	snapshotUsecase ISnapshotUsecase
-	snapshotCh      chan struct{}
 }
 
+// CnfEventSystem.
 type CnfEventSystem struct {
 	Ctx             context.Context
 	Log             *logrus.Logger
@@ -29,6 +31,7 @@ type CnfEventSystem struct {
 	SnapshotUsecase ISnapshotUsecase
 }
 
+// NewEventSystem.
 func NewEventSystem(cnf CnfEventSystem) (*eventSystem, error) {
 
 	if err := os.MkdirAll(cnf.BasePath, 0777); err != nil {
@@ -44,21 +47,37 @@ func NewEventSystem(cnf CnfEventSystem) (*eventSystem, error) {
 		return nil, err
 	}
 
-	// TODO: Занести все файлы перед началом
-
 	return &eventSystem{
 		ctx:             cnf.Ctx,
 		log:             cnf.Log,
-		basePath:        cnf.BasePath,
 		snapshotUsecase: cnf.SnapshotUsecase,
 		watcher:         watcher,
-		snapshotCh:      make(chan struct{}),
 	}, nil
 }
 
+// Run.
 func (e *eventSystem) Run() error {
 
 	defer e.watcher.Close()
+
+	makeSnapshotCh := make(chan struct{})
+
+	go func() {
+		ok := false
+		for {
+			select {
+			case <-e.ctx.Done():
+				return
+			case <-time.Tick(1 * time.Second):
+				if ok {
+					e.snapshotUsecase.CreateSnapshot(UPDATE_MODE)
+					ok = false
+				}
+			case <-makeSnapshotCh:
+				ok = true
+			}
+		}
+	}()
 
 	for {
 		select {
@@ -70,36 +89,14 @@ func (e *eventSystem) Run() error {
 			}
 			e.log.Infof("new event: %v", event)
 
-			if event.Has(fsnotify.Create) || event.Has(fsnotify.Write) {
-				e.watcher.Add(event.Name)
-				e.snapshotCh <- struct{}{}
+			if !event.Has(fsnotify.Chmod) {
+				makeSnapshotCh <- struct{}{}
 			}
-
-			if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-				e.watcher.Remove(event.Name)
-				e.snapshotCh <- struct{}{}
-			}
-
-			// fsnotify.Chmod не предусмотрен, будет игнорироваться
-
 		case err, ok := <-e.watcher.Errors:
 			if !ok {
 				return nil
 			}
 			return err
-		}
-	}
-}
-
-// TODO: взять из main
-func (e *eventSystem) createSnapshot() {
-
-	for {
-		select {
-		case <-e.snapshotCh:
-			<- time.After(500 * time.Millisecond)
-			e.snapshotUsecase.CreateSnapshot()
-			e.log.Info("run snapshot")
 		}
 	}
 }
