@@ -66,12 +66,6 @@ func (c *consistencyUsecase) ApplyConsistency(ctx context.Context, consistency e
 		// c.sortNames()
 
 		// TODO: тут можно запустить через errgroup
-		if len(consistency.NeedToLock) != 0 {
-			for _, v := range consistency.NeedToLock {
-				c.fileService.Lock(ctx, v.File)
-			}
-		}
-
 		if len(consistency.NeedToRemove) != 0 {
 			for _, v := range consistency.NeedToRemove {
 				c.fileService.Remove(ctx, v.File)
