@@ -14,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// TODO: вынести в константы
 const NEED_TO_DO = -1
 
 type IdentifierUsecase interface {
