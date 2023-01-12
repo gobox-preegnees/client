@@ -24,6 +24,7 @@ func Parse(log *logrus.Logger, jwtToken string) identifire {
 			log.Fatal(err)
 		}
 
+		// TODO: еще нужен эндпонит для отправка снепшотов
 		claims, ok := token.Claims.(jwt.MapClaims)
 		addrSSE := claims["AddrSSE"]
 		clientID := claims["ClientID"]
