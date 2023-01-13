@@ -1,12 +1,17 @@
 package http
 
+/*
+* The "http" package is needed to getting a new consistency
+* and call the applying function.
+ */
+
 import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"net/http"
 
+	consts "github.com/gobox-preegnees/gobox-client/internal/consts"
 	entity "github.com/gobox-preegnees/gobox-client/internal/domain/entity"
 
 	"github.com/go-playground/validator/v10"
@@ -14,68 +19,64 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// TODO: вынести в константы
-const NEED_TO_DO = -1
-
-type IdentifierUsecase interface {
-	GetClientId() (clientID string)
-	GetAddrSSE() (addr string)
-}
-
-type SnapshotUsecase interface {
+//go:generate mockgen -destination=../../mocks/controller/http/client_sse/ISnapshotUsecase/ISnapshotUsecase.go -source=client_sse.go
+type ISnapshotUsecase interface {
+	// Getting a new ID, since it changes when new snapshots are sent
 	GetCurrentRequestId() (id int)
 }
 
-type ConsistencyUsecase interface {
+//go:generate mockgen -destination=../../mocks/controller/http/client_sse/IConsistencyUsecase/IConsistencyUsecase.go -source=client_sse.go
+type IConsistencyUsecase interface {
+	// Accepts the new consistency that came from the server
 	ApplyConsistency(entity.Consistency)
 }
 
-type Usecase interface {
-	SnapshotUsecase
-	IdentifierUsecase
-	ConsistencyUsecase
-}
-
 // eventSSE.
-type eventSSE struct {
-	ctx       context.Context
-	log       *logrus.Logger
-	clientSSE *sse.Client
-	usecase   Usecase
+type clientSSE struct {
+	ctx                context.Context
+	log                *logrus.Logger
+	clientSSE          *sse.Client
+	consistencyUsecase IConsistencyUsecase
+	snapshotUsecase    ISnapshotUsecase
+	clientId           string
+	streamId           string
 }
 
 // CnfEventSSE.
-type CnfEventSSE struct {
-	Ctx      context.Context
-	Log      *logrus.Logger
-	JwtToken string
-	Usecase  Usecase
+type CnfClientSSE struct {
+	Ctx                context.Context
+	Log                *logrus.Logger
+	ConsistencyUsecase IConsistencyUsecase
+	SnapshotUsecase    ISnapshotUsecase
+	StreamId           string
+	// Example: http(s)://localhost:8080/events?stream=1
+	AddrSSE  string
+	ClientId string
 }
 
 // NewEventSSE.
-func NewEventSSE(cnf CnfEventSSE) (*eventSSE, error) {
+func NewClientSSE(cnf CnfClientSSE) *clientSSE {
 
-	client := sse.NewClient(cnf.Usecase.GetAddrSSE())
+	client := sse.NewClient(cnf.AddrSSE)
 	client.Connection.Transport = &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 
-	if !client.Connected {
-		return nil, fmt.Errorf("No connection")
+	return &clientSSE{
+		ctx:                cnf.Ctx,
+		log:                cnf.Log,
+		streamId:             cnf.StreamId,
+		clientSSE:          client,
+		clientId:           cnf.ClientId,
+		consistencyUsecase: cnf.ConsistencyUsecase,
+		snapshotUsecase:    cnf.SnapshotUsecase,
 	}
-
-	return &eventSSE{
-		ctx:       cnf.Ctx,
-		log:       cnf.Log,
-		clientSSE: client,
-		usecase:   cnf.Usecase,
-	}, nil
 }
 
 // Run.
-func (e *eventSSE) Run() error {
+func (e clientSSE) Run() error {
 
-	return e.clientSSE.SubscribeRaw(func(msg *sse.Event) {
+	err := e.clientSSE.Subscribe(e.streamId, func(msg *sse.Event) {
 		consistency := entity.Consistency{}
 		if err := json.Unmarshal(msg.Data, &consistency); err != nil {
 			e.log.Fatal(err)
@@ -86,14 +87,22 @@ func (e *eventSSE) Run() error {
 			e.log.Fatal(err)
 		}
 
-		// Accept new chages
-		if consistency.RequestId == NEED_TO_DO ||
-			(consistency.Client == e.usecase.GetClientId() &&
-				consistency.RequestId == e.usecase.GetCurrentRequestId()) {
-			e.usecase.ApplyConsistency(consistency)
+		// TODO: тут где то нужно отсортировать пути для переименования, либо сделать это на сервере
+		// и поменять / на \, в зависимости от платформы!!!
+		// и еще нужно где то расшифровать
+
+		// Accept new chages if NEED_TO_DO is true or client and requestId is valid
+		if consistency.RequestId == consts.NEED_TO_DO ||
+			(consistency.Client == e.clientId &&
+				consistency.RequestId == e.snapshotUsecase.GetCurrentRequestId()) {
+			e.consistencyUsecase.ApplyConsistency(consistency)
 			e.log.Debugf("apply new consistency:%v", consistency)
 			return
 		}
 		e.log.Debugf("ignore consistency:%v", consistency)
 	})
+	if err != nil {
+		return err
+	}
+	return nil
 }
